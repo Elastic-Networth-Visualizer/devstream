@@ -1,4 +1,5 @@
 {
+  "name": "@env/devstream",
   "version": "0.1.0",
   "description": "A command-line utility that monitor development activities and provide insights.",
   "author": "Elastic Networth Visualizer <elasticnetworthvisualizer@gmail.com>",
@@ -23,16 +24,18 @@
     "singleQuote": false
   },
   "tasks": {
-    "test": "deno test --unstable --allow-all",
-    "lint": "deno lint --unstable --allow-all",
-    "format": "deno fmt --unstable --allow-all",
+    "test": "deno test --allow-all",
+    "lint": "deno lint --allow-all",
+    "format": "deno fmt --allow-all",
     "dev": "deno run --watch --allow-read --allow-write --allow-net --allow-env --allow-run main.ts"
   },
+  "exports": "./mod.ts",
   "imports": {
     "@cliffy/ansi": "jsr:@cliffy/ansi@^1.0.0-rc.7",
     "@cliffy/prompt": "jsr:@cliffy/prompt@1.0.0-rc.7",
     "@cliffy/table": "jsr:@cliffy/table@1.0.0-rc.7",
     "@env/env-event-stream": "jsr:@env/env-event-stream@^0.3.0",
-    "@std/assert": "jsr:@std/assert@1"
+    "@std/assert": "jsr:@std/assert@1",
+    "@std/path": "jsr:@std/path@^1.0.9"
   }
 }

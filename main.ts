@@ -1,258 +1,38 @@
 #!/usr/bin/env -S deno run --watch --allow-read --allow-write --allow-net --allow-env --allow-run
 // deno-lint-ignore-file require-await no-explicit-any
 import { parse } from "https://deno.land/std@0.224.0/flags/mod.ts";
-import {
-  EventBroker,
-  FileDeadLetterQueue,
-  FileEventStore,
-} from "@env/env-event-stream";
+import type { EventBroker } from "@env/env-event-stream";
 import { colors } from "@cliffy/ansi/colors";
 import { Table } from "@cliffy/table";
-import {
-  Input,
-  Select,
-} from "@cliffy/prompt";
-import * as path from "https://deno.land/std@0.224.0/path/mod.ts";
-
-// Define DevStream config file and data directories
-const HOME_DIR = Deno.env.get("HOME") || Deno.env.get("USERPROFILE") || ".";
-const CONFIG_DIR = path.join(HOME_DIR, ".devstream");
-const EVENT_STORE_DIR = path.join(CONFIG_DIR, "events");
-const DLQ_DIR = path.join(CONFIG_DIR, "dlq");
-const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
-
-// Default configuration
-const DEFAULT_CONFIG = {
-  version: "0.1.0",
-  watchDirs: ["./src", "./tests", "./docs"],
-  ignorePaths: ["node_modules", "dist", ".git", "target", "build"],
-  topics: {
-    "file.changes": {
-      persistent: true,
-      retentionPeriod: 7 * 24 * 60 * 60 * 1000,
-    }, // 7 days
-    "git.events": {
-      persistent: true,
-      retentionPeriod: 30 * 24 * 60 * 60 * 1000,
-    }, // 30 days
-    "build.events": {
-      persistent: true,
-      retentionPeriod: 3 * 24 * 60 * 60 * 1000,
-    }, // 3 days
-    "notification": { persistent: false },
-    "focus.state": { persistent: true },
-    "workflow.automation": { persistent: true },
-  },
-  automations: [],
-  notification: {
-    focusMode: false,
-    silentHours: { start: "22:00", end: "08:00" },
-    priorityPatterns: ["test failure", "build failure", "security", "deadline"],
-  },
-  insights: {
-    collectStats: true,
-    dailySummary: true,
-  },
-};
-
-// Event types for type safety
-interface FileChangeEvent {
-  path: string;
-  operation: "create" | "modify" | "delete";
-  extension: string;
-  size?: number;
-}
-
-interface GitEvent {
-  operation: "commit" | "push" | "pull" | "merge" | "branch" | "checkout";
-  message?: string;
-  branch?: string;
-  hash?: string;
-}
-
-interface BuildEvent {
-  operation: "start" | "success" | "failure";
-  duration?: number;
-  errors?: string[];
-  warnings?: string[];
-}
-
-interface NotificationEvent {
-  level: "info" | "warning" | "error" | "success";
-  message: string;
-  source: string;
-  actionable: boolean;
-  actions?: string[];
-}
-
-interface FocusStateEvent {
-  state: "focus" | "break" | "available";
-  startTime: number;
-  endTime?: number;
-  duration?: number;
-}
-
-interface WorkflowEvent {
-  name: string;
-  trigger: string;
-  action: string;
-  status: "started" | "completed" | "failed";
-  error?: string;
-}
-
-// Create a custom broker with file-based storage
-async function initBroker(): Promise<EventBroker> {
-  // Ensure config directory exists
-  try {
-    await Deno.mkdir(CONFIG_DIR, { recursive: true });
-    await Deno.mkdir(EVENT_STORE_DIR, { recursive: true });
-    await Deno.mkdir(DLQ_DIR, { recursive: true });
-  } catch (error) {
-    if (!(error instanceof Deno.errors.AlreadyExists)) {
-      console.error("Failed to create config directories:", error);
-      Deno.exit(1);
-    }
-  }
-
-  // Load or create config
-  let config = DEFAULT_CONFIG;
-  try {
-    const configText = await Deno.readTextFile(CONFIG_FILE);
-    config = JSON.parse(configText);
-  } catch (error) {
-    if (error instanceof Deno.errors.NotFound) {
-      await Deno.writeTextFile(
-        CONFIG_FILE,
-        JSON.stringify(DEFAULT_CONFIG, null, 2),
-      );
-    } else {
-      console.error("Error reading config:", error);
-    }
-  }
-
-  // Create event store and DLQ
-  const eventStore = new FileEventStore(EVENT_STORE_DIR);
-  const deadLetterQueue = new FileDeadLetterQueue(DLQ_DIR);
-
-  // Create broker with our storage
-  const broker = new EventBroker(eventStore, deadLetterQueue);
-
-  // Initialize topics from config
-  for (const [topicName, options] of Object.entries(config.topics)) {
-    broker.createTopic(topicName, options);
-  }
-
-  return broker;
-}
+import { Input, Select } from "@cliffy/prompt";
+import * as path from "@std/path";
+import { checkGitStatus, initBroker, runGit, watchDir } from "./helpers/index.ts";
+import type {
+  BuildEvent,
+  FileChangeEvent,
+  FocusStateEvent,
+  GitEvent,
+  NotificationEvent,
+  WorkflowEvent,
+} from "./types/index.ts";
+import { CONFIG_DIR, CONFIG_FILE } from "./constants.ts";
 
 // File watcher to detect changes
-async function watchFiles(
+export function watchFiles(
   broker: EventBroker,
   dirs: string[],
   ignorePaths: string[],
 ): Promise<void> {
-  if (!broker.getTopic("file.changes")) {
-    broker.createTopic("file.changes");
-  }
-
-  // Helper to check if path should be ignored
-  const shouldIgnore = (path: string): boolean => {
-    return ignorePaths.some((ignore) => path.includes(ignore));
-  };
-
-  // Helper to watch a directory recursively
-  const watchDir = async (dir: string): Promise<void> => {
-    try {
-      // Get initial snapshot of files (needed to compare for modifications)
-      const fileMap = new Map<string, { mtime: number; size: number }>();
-
-      const scanDir = async (dirPath: string) => {
-        for await (const entry of Deno.readDir(dirPath)) {
-          const entryPath = path.join(dirPath, entry.name);
-
-          if (shouldIgnore(entryPath)) continue;
-
-          if (entry.isDirectory) {
-            await scanDir(entryPath);
-          } else if (entry.isFile) {
-            try {
-              const stat = await Deno.stat(entryPath);
-              fileMap.set(entryPath, {
-                mtime: stat.mtime?.getTime() || 0,
-                size: stat.size,
-              });
-            } catch (err) {
-              // File might have been deleted while scanning
-              console.debug(`Error stating file ${entryPath}:`, err);
-            }
-          }
-        }
-      };
-
-      await scanDir(dir);
-
-      // Start watching
-      const watcher = Deno.watchFs(dir);
-      console.log(`Watching directory: ${dir}`);
-
-      for await (const event of watcher) {
-        for (const path of event.paths) {
-          if (shouldIgnore(path)) continue;
-
-          try {
-            const extension = path.split(".").pop() || "";
-
-            if (event.kind === "create" || event.kind === "modify") {
-              const stat = await Deno.stat(path);
-              const fileEvent: FileChangeEvent = {
-                path,
-                operation: event.kind === "create" ? "create" : "modify",
-                extension,
-                size: stat.size,
-              };
-
-              // If it's a modification, check if file actually changed
-              if (event.kind === "modify") {
-                const previous = fileMap.get(path);
-                if (
-                  previous && previous.mtime === stat.mtime?.getTime() &&
-                  previous.size === stat.size
-                ) {
-                  continue; // Skip if no actual change
-                }
-
-                // Update the file map
-                fileMap.set(path, {
-                  mtime: stat.mtime?.getTime() || 0,
-                  size: stat.size,
-                });
-              }
-
-              broker.publish("file.changes", `file.${event.kind}`, fileEvent);
-            } else if (event.kind === "remove") {
-              const fileEvent: FileChangeEvent = {
-                path,
-                operation: "delete",
-                extension,
-              };
-              broker.publish("file.changes", "file.delete", fileEvent);
-              fileMap.delete(path);
-            }
-          } catch (err) {
-            // File might be temporarily locked or unavailable
-            console.debug(`Error processing ${path}:`, err);
-          }
-        }
-      }
-    } catch (error) {
-      console.error(`Error watching directory ${dir}:`, error);
+  return new Promise((resolve) => {
+    if (!broker.getTopic("file.changes")) {
+      broker.createTopic("file.changes");
     }
-  };
-
-  // Start watching all directories
-  for (const dir of dirs) {
-    watchDir(dir).catch(console.error);
-  }
+    // Start watching all directories
+    for (const dir of dirs) {
+      watchDir(broker, dir, ignorePaths).catch(console.error);
+    }
+    resolve();
+  });
 }
 
 // Git watcher to detect git operations
@@ -260,25 +40,6 @@ async function watchGit(broker: EventBroker): Promise<void> {
   if (!broker.getTopic("git.events")) {
     broker.createTopic("git.events");
   }
-
-  // Helper to run git commands
-  const runGit = async (args: string[]): Promise<string> => {
-    const command = new Deno.Command("git", {
-      args: args,
-      stdout: "piped",
-      stderr: "piped",
-    });
-
-    const { stdout, stderr } = await command.output();
-    const output = stdout;
-    const error = stderr;
-
-    if (error.length > 0) {
-      throw new TextDecoder().decode(error);
-    }
-
-    return new TextDecoder().decode(output).trim();
-  };
 
   // Get current git status
   let lastCommitHash = "";
@@ -292,45 +53,12 @@ async function watchGit(broker: EventBroker): Promise<void> {
     return; // Not a git repository
   }
 
-  // Function to check git status
-  const checkGitStatus = async () => {
-    try {
-      // Check for branch changes
-      const currentBranch = await runGit(["rev-parse", "--abbrev-ref", "HEAD"]);
-      if (currentBranch !== lastBranch) {
-        const gitEvent: GitEvent = {
-          operation: "checkout",
-          branch: currentBranch,
-        };
-        await broker.publish("git.events", "git.checkout", gitEvent);
-        lastBranch = currentBranch;
-      }
-
-      // Check for new commits
-      const currentCommitHash = await runGit(["rev-parse", "HEAD"]);
-      if (currentCommitHash !== lastCommitHash) {
-        // Get commit message
-        const commitMessage = await runGit(["log", "-1", "--pretty=%B"]);
-
-        const gitEvent: GitEvent = {
-          operation: "commit",
-          message: commitMessage,
-          branch: currentBranch,
-          hash: currentCommitHash,
-        };
-        await broker.publish("git.events", "git.commit", gitEvent);
-        lastCommitHash = currentCommitHash;
-      }
-    } catch (error) {
-      console.debug("Error checking git status:", error);
-    }
-
-    // Check again after delay
-    setTimeout(checkGitStatus, 5000);
-  };
-
   // Start checking git status periodically
-  checkGitStatus();
+  checkGitStatus(
+    broker,
+    lastBranch,
+    lastCommitHash,
+  );
 }
 
 // Function to watch build systems
@@ -1574,7 +1302,9 @@ COMMANDS:
     console.log(colors.green("📊 Starting DevStream..."));
 
     // Start watching files
-    const watchDirs = (config.watchDirs || []).map((dir: string) => path.join(Deno.cwd(), dir));
+    const watchDirs = (config.watchDirs || []).map((dir: string) =>
+      path.join(Deno.cwd(), dir)
+    );
     if (watchDirs.length === 0) {
       console.error(colors.red("No watch directories specified"));
       Deno.exit(1);
