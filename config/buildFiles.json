@@ -1,0 +1,41 @@
+{
+  "javascript": [
+    "package.json",
+    "package-lock.json",
+    "yarn.lock",
+    "npm-shrinkwrap.json",
+    "bun.lockb"
+  ],
+  "typescript": ["tsconfig.json", "tsconfig.build.json"],
+  "deno": ["deno.json", "deno.jsonc", "deps.ts", "import_map.json"],
+  "rust": ["Cargo.toml", "Cargo.lock"],
+  "go": ["go.mod", "go.sum", "Gopkg.toml"],
+  "python": [
+    "setup.py",
+    "pyproject.toml",
+    "requirements.txt",
+    "Pipfile",
+    "poetry.lock"
+  ],
+  "java": [
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "build.xml"
+  ],
+  "ruby": ["Gemfile", "Gemfile.lock", "Rakefile"],
+  "php": ["composer.json", "composer.lock"],
+  "c++": ["CMakeLists.txt", "Makefile", "meson.build", "SConstruct"],
+  "c#": ["*.csproj", "*.sln", "packages.config"],
+  "elixir": ["mix.exs", "mix.lock"],
+  "scala": ["build.sbt", "project/build.properties"],
+  "swift": ["Package.swift", "Podfile"],
+  "kotlin": ["build.gradle.kts"],
+  "common": [
+    "Makefile",
+    "Dockerfile",
+    ".github/workflows/*.yml",
+    ".gitlab-ci.yml"
+  ]
+}

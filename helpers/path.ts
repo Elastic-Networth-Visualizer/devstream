@@ -1,6 +1,7 @@
 import * as path from "@std/path";
 import type { EventBroker } from "@env/env-event-stream";
 import type { FileChangeEvent } from "../types/index.ts";
+import { convertFromBytes } from "./common.ts";
 
 export const shouldIgnore = (path: string, ignorePaths: string[]): boolean => {
   return ignorePaths.some((ignore) => path.includes(ignore));
@@ -60,7 +61,7 @@ export const watchDir = async (
               path,
               operation: event.kind,
               extension,
-              size: stat.size,
+              size: convertFromBytes(stat.size) + " KB",
             };
 
             // If it's a modification, check if file actually changed

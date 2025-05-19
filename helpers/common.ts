@@ -1,5 +1,5 @@
 import { EventBroker, FileDeadLetterQueue, FileEventStore } from "@env/env-event-stream";
-import { CONFIG_DIR, CONFIG_FILE, DEFAULT_CONFIG, DLQ_DIR, EVENT_STORE_DIR } from "../constants.ts";
+import { CONFIG_DIR, CONFIG_FILE, DEFAULT_CONFIG, DLQ_DIR, EVENT_STORE_DIR } from "../config/constants.ts";
 
 export async function initBroker(): Promise<EventBroker> {
   // Ensure config directory exists
@@ -43,4 +43,17 @@ export async function initBroker(): Promise<EventBroker> {
   }
 
   return broker;
+}
+
+export const convertFromBytes = (bytes: number, unit: 'KB' | 'MB' | 'GB' = 'KB'): number => {
+  const unitsMap = {
+    KB: 1024,
+    MB: 1024 ** 2,
+    GB: 1024 ** 3,
+  }
+
+  if (!unitsMap[unit]) {
+    throw new Error(`Invalid unit: ${unit}`);
+  }
+  return bytes / unitsMap[unit];
 }

@@ -6,16 +6,24 @@ import { colors } from "@cliffy/ansi/colors";
 import { Table } from "@cliffy/table";
 import { Input, Select } from "@cliffy/prompt";
 import * as path from "@std/path";
-import { checkGitStatus, initBroker, runGit, watchDir } from "./helpers/index.ts";
+import {
+  checkGitStatus,
+  handleBuildFileChange,
+  initBroker,
+  isInSilentHours,
+  preprocessBuildConfig,
+  runGit,
+  watchDir,
+} from "./helpers/index.ts";
 import type {
-  BuildEvent,
+AutomationConfig,
   FileChangeEvent,
   FocusStateEvent,
   GitEvent,
   NotificationEvent,
   WorkflowEvent,
 } from "./types/index.ts";
-import { CONFIG_DIR, CONFIG_FILE } from "./constants.ts";
+import { CONFIG_DIR, CONFIG_FILE } from "./config/constants.ts";
 
 // File watcher to detect changes
 export function watchFiles(
@@ -67,30 +75,26 @@ async function watchBuilds(broker: EventBroker): Promise<void> {
     broker.createTopic("build.events");
   }
 
-  // Set up watch for typical build files
-  const buildFiles = [
-    "package.json",
-    "Cargo.toml",
-    "pom.xml",
-    "build.gradle",
-    "Makefile",
-    "CMakeLists.txt",
-  ];
+  const { lookup, patterns } = await preprocessBuildConfig();
 
   // Subscribe to file changes related to build files
   broker.subscribe("file.changes", async (event) => {
     const fileEvent = event.payload as FileChangeEvent;
     const fileName = path.basename(fileEvent.path);
 
-    if (buildFiles.includes(fileName)) {
-      console.log(`Build file ${fileName} was ${fileEvent.operation}d`);
+    // Fast path: O(1) lookup for exact matches
+    if (lookup.has(fileName)) {
+      await handleBuildFileChange(broker, fileName, fileEvent);
+      return;
+    }
 
-      // Publish a build file change event
-      const buildEvent: BuildEvent = {
-        operation: "start",
-      };
-
-      await broker.publish("build.events", "build.file_change", buildEvent);
+    // Slow path (only for files that might match patterns): Check regex patterns
+    // This is only needed for the small subset of files with patterns like *.csproj
+    for (const [pattern, language] of patterns) {
+      if (pattern.test(fileName)) {
+        await handleBuildFileChange(broker, fileName, fileEvent, language);
+        return;
+      }
     }
   }, { eventTypes: ["file.create", "file.modify"] });
 }
@@ -106,31 +110,6 @@ async function setupNotifications(broker: EventBroker): Promise<void> {
 
   // Track focus state
   let inFocusMode = config.notification.focusMode;
-
-  // Function to check if we're in silent hours
-  const isInSilentHours = (): boolean => {
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    const currentTime = currentHour * 60 + currentMinute;
-
-    const startParts = config.notification.silentHours.start.split(":");
-    const startHour = parseInt(startParts[0]);
-    const startMinute = parseInt(startParts[1]);
-    const startTime = startHour * 60 + startMinute;
-
-    const endParts = config.notification.silentHours.end.split(":");
-    const endHour = parseInt(endParts[0]);
-    const endMinute = parseInt(endParts[1]);
-    const endTime = endHour * 60 + endMinute;
-
-    // Handle wrap around midnight
-    if (startTime > endTime) {
-      return currentTime >= startTime || currentTime <= endTime;
-    } else {
-      return currentTime >= startTime && currentTime <= endTime;
-    }
-  };
 
   // Function to check if message is high priority
   const isHighPriority = (message: string): boolean => {
@@ -153,7 +132,7 @@ async function setupNotifications(broker: EventBroker): Promise<void> {
     }
 
     // Skip non-priority notifications during silent hours
-    if (isInSilentHours() && !isHighPriority(notificationEvent.message)) {
+    if (isInSilentHours(config) && !isHighPriority(notificationEvent.message)) {
       console.debug(
         `Suppressing notification during silent hours: ${notificationEvent.message}`,
       );
@@ -218,9 +197,9 @@ async function setupAutomations(broker: EventBroker): Promise<void> {
 
   // Read automations from config
   const configText = await Deno.readTextFile(CONFIG_FILE);
-  const config = JSON.parse(configText);
+  const {automations} = JSON.parse(configText) as { automations: AutomationConfig[] };
 
-  for (const automation of config.automations) {
+  for (const automation of automations) {
     // Create a subscription for each automation
     broker.subscribe(automation.trigger.topic, async (event) => {
       // Check if event type matches

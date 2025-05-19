@@ -2,7 +2,7 @@ export interface FileChangeEvent {
   path: string;
   operation: "create" | "modify" | "delete";
   extension: string;
-  size?: number;
+  size?: string;
 }
 
 export interface GitEvent {
@@ -14,6 +14,8 @@ export interface GitEvent {
 
 export interface BuildEvent {
   operation: "start" | "success" | "failure";
+  buildFile?: string;
+  language?: string;
   duration?: number;
   errors?: string[];
   warnings?: string[];
