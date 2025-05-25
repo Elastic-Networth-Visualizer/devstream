@@ -1,0 +1,37 @@
+name: Release
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: lts
+
+      - name: Build Binaries
+        run: |
+          deno task build:linux
+          deno task build:macos
+          deno task build:windows
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.ref }}
+          files: |
+            devstream
+            devstream.exe
+            devstream.darwin
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Upload Release Assets
+        uses: actions/upload-artifact@v3
+        with:
+          name: release-assets
+          path: ./dist
