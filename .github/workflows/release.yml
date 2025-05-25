@@ -21,6 +21,15 @@ jobs:
           deno task build:linux
           deno task build:macos
           deno task build:windows
+          - name: Compress binaries with UPX
+      
+      - name: Compress binaries with UPX
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y upx-ucl
+          upx --best --lzma devstream || true
+          upx --best --lzma devstream.exe || true
+          # Note: UPX doesn't work well with macOS binaries
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
