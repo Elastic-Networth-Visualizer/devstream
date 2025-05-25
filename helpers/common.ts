@@ -1,5 +1,17 @@
-import { EventBroker, FileDeadLetterQueue, FileEventStore } from "@env/env-event-stream";
-import { CONFIG_DIR, CONFIG_FILE, DEFAULT_CONFIG, DLQ_DIR, EVENT_STORE_DIR } from "../config/constants.ts";
+// deno-lint-ignore-file no-explicit-any
+import {
+  EventBroker,
+  FileDeadLetterQueue,
+  FileEventStore,
+} from "@env/env-event-stream";
+import {
+  CONFIG_DIR,
+  CONFIG_FILE,
+  DEFAULT_CONFIG,
+  DLQ_DIR,
+  EVENT_STORE_DIR,
+} from "../config/constants.ts";
+import type { NotificationEvent } from "../types/index.ts";
 
 export async function initBroker(): Promise<EventBroker> {
   // Ensure config directory exists
@@ -45,15 +57,81 @@ export async function initBroker(): Promise<EventBroker> {
   return broker;
 }
 
-export const convertFromBytes = (bytes: number, unit: 'KB' | 'MB' | 'GB' = 'KB'): number => {
+export const convertFromBytes = (
+  bytes: number,
+  unit: "KB" | "MB" | "GB" = "KB",
+): number => {
   const unitsMap = {
     KB: 1024,
     MB: 1024 ** 2,
     GB: 1024 ** 3,
-  }
+  };
 
   if (!unitsMap[unit]) {
     throw new Error(`Invalid unit: ${unit}`);
   }
   return bytes / unitsMap[unit];
+};
+
+export function generateDailySummary(
+  insightsData: any,
+  broker: EventBroker,
+): void {
+  // Build summary message
+  let summary = "📊 Your Development Summary for Today\n\n";
+
+  // File changes
+  const totalFileChanges = Array.from(
+    insightsData.fileChanges.byExtension.values(),
+  )
+    .reduce((total, count) => (total as number) + (count as number), 0);
+
+  summary += `📝 File Changes: ${totalFileChanges}\n`;
+
+  // Top file extensions
+  const sortedExtensions = (Array.from(
+    insightsData.fileChanges.byExtension.entries(),
+  ) as [string, number][])
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
+  if (sortedExtensions.length > 0) {
+    summary += "Top file types:\n";
+    for (const [ext, count] of sortedExtensions) {
+      summary += `  - ${ext}: ${count}\n`;
+    }
+  }
+
+  // Focus sessions
+  const focusSessions = insightsData.focus.sessions.length;
+  const totalFocusTimeMinutes = Math.floor(
+    insightsData.focus.totalDuration / 60000,
+  );
+
+  summary += `\n🧠 Focus Sessions: ${focusSessions}\n`;
+  summary += `⏱️ Total Focus Time: ${totalFocusTimeMinutes} minutes\n`;
+
+  // Git activity
+  summary += `\n📊 Git Activity:\n`;
+  summary += `  - Commits: ${insightsData.git.commits}\n`;
+  summary += `  - Pushes: ${insightsData.git.pushes}\n`;
+  summary += `  - Pulls: ${insightsData.git.pulls}\n`;
+
+  // Send as a notification
+  const notificationEvent: NotificationEvent = {
+    level: "info",
+    message: summary,
+    source: "Insights",
+    actionable: false,
+  };
+
+  broker.publish("notification", "notification.insights", notificationEvent);
+
+  // Reset counters for the next day
+  insightsData.fileChanges.byExtension.clear();
+  insightsData.git.commits = 0;
+  insightsData.git.pushes = 0;
+  insightsData.git.pulls = 0;
+  insightsData.focus.sessions = [];
+  insightsData.focus.totalDuration = 0;
 }

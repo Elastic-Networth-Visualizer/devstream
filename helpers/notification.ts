@@ -23,3 +23,47 @@ export const isInSilentHours = (config: Config): boolean => {
     return currentTime >= startTime && currentTime <= endTime;
   }
 };
+
+export const isHighPriority = (message: string, config: Config): boolean => {
+  return config.notification.priorityPatterns.some(
+    (pattern: string) => message.toLowerCase().includes(pattern.toLowerCase()),
+  );
+};
+
+export const getBuiltinNotifierCommandAndArgs = (details: {
+  message: string;
+  source: string;
+}): { cmd: string; args: string[] } => {
+  let command: string;
+  let args: string[] = [];
+
+  const title = `DevStream: ${details.source}`;
+  switch (Deno.build.os) {
+    case "windows": {
+      command = "powershell";
+      args = [
+        "-Command",
+        `New-BurntToastNotification -Text "${title}", "${details.message}"`,
+      ];
+      break;
+    }
+    case "darwin": {
+      command = "osascript";
+      args = [
+        "-e",
+        `display notification "${details.message}" with title "${title}"`,
+      ];
+      break;
+    }
+    case "linux": {
+      command = "notify-send";
+      args = [title, details.message];
+      break;
+    }
+    default: {
+      throw new Error("Unsupported OS for notifications");
+    }
+  }
+
+  return { cmd: command, args };
+};

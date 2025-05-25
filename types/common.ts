@@ -14,7 +14,7 @@ export interface AutomationConfig {
     type: string;
     command: string;
     args?: string[];
-  }
+  };
 }
 
 export interface Config {
