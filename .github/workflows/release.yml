@@ -1,13 +1,14 @@
 name: Release
 on:
   push:
-    tags: ["v*"]
+    branches:
+      - main
 
 jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with:
           deno-version: lts
@@ -19,19 +20,20 @@ jobs:
           deno task build:windows
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref }}
           files: |
             devstream
             devstream.exe
             devstream.darwin
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
 
       - name: Upload Release Assets
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: release-assets
-          path: ./dist
+          path: |
+            devstream
+            devstream.exe
+            devstream.darwin
