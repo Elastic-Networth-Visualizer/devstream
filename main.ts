@@ -1,4 +1,3 @@
-#!/usr/bin/env -S deno run --watch --allow-read --allow-write --allow-net --allow-env --allow-run
 import * as path from "@std/path";
 import { parseArgs } from "@std/cli/parse-args";
 import { colors } from "@cliffy/ansi/colors";
